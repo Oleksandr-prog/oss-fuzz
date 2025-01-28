@@ -58,7 +58,8 @@ else
   cp -r $SRC/project-parent/fuzz-targets/target/test-classes/ $OUT/test-classes
   # RUNTIME_CLASSPATH="$(cat fuzz-targets/cp.txt):$OUT/test-classes"
   RUNTIME_CLASSPATH_ABSOLUTE="$(cat fuzz-targets/cp.txt):$OUT/test-classes"
-  RUNTIME_CLASSPATH_RELATIVE=$(echo $RUNTIME_CLASSPATH_ABSOLUTE | sed "s|$OUT|.|g")
+  # replace dirname with placeholder $this_dir that will be replaced at runtime
+  RUNTIME_CLASSPATH=$(echo $RUNTIME_CLASSPATH_ABSOLUTE | sed "s|$OUT|\$this_dir|g")
 
   for fuzzer in $(find $SRC/project-parent -name '*Fuzzer.java'); do
     fuzzer_basename=$(basename -s .java $fuzzer)
@@ -66,16 +67,18 @@ else
     # Create an execution wrapper for every fuzztarget
     echo "#!/bin/bash
   # LLVMFuzzerTestOneInput comment for fuzzer detection by infrastructure.
+  this_dir=\$(dirname \"\$0\")
   if [[ \"\$@\" =~ (^| )-runs=[0-9]+($| ) ]]; then
-    mem_settings='-Xmx1900m -Xss900k'
+    mem_settings='-Xmx1900m:-Xss900k'
   else
-    mem_settings='-Xmx2048m -Xss1024k'
+    mem_settings='-Xmx2048m:-Xss1024k'
   fi
-  java -cp $RUNTIME_CLASSPATH_RELATIVE \
-  \$mem_settings \
-  com.code_intelligence.jazzer.Jazzer \
-  --target_class=com.example.$fuzzer_basename \
-  \$@" > $OUT/$fuzzer_basename
+  LD_LIBRARY_PATH=\"$JVM_LD_LIBRARY_PATH\":\$this_dir \
+\$this_dir/jazzer_driver --agent_path=\$this_dir/jazzer_agent_deploy.jar \
+--cp=$RUNTIME_CLASSPATH \
+--target_class=com.example.$fuzzer_basename \
+--jvm_args=\"\$mem_settings\" \
+\$@" > $OUT/$fuzzer_basename
     chmod u+x $OUT/$fuzzer_basename
   done
 

@@ -15,7 +15,6 @@
 ################################################################################
 
 FROM gcr.io/oss-fuzz-base/base-builder-python
-RUN pip3 install cython
 RUN git clone https://github.com/numpy/numpy && cd numpy && git submodule update --init
 WORKDIR $SRC
 COPY *.py build.sh $SRC/

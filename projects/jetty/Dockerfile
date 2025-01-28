@@ -16,13 +16,23 @@
 
 FROM gcr.io/oss-fuzz-base/base-builder-jvm
 
-RUN curl -L https://downloads.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip -o maven.zip && \
+RUN curl -L https://archive.apache.org/dist/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip -o maven.zip && \
     unzip maven.zip -d $SRC/maven && \
     rm -rf maven.zip
 
 ENV MVN $SRC/maven/apache-maven-3.6.3/bin/mvn
 
-# if not set python infra helper cannot be used for local testing
+RUN git clone --depth 1 https://github.com/google/fuzzing && \
+    cp fuzzing/dictionaries/http.dict $SRC/HTTP2CServerFuzzer.dict && \
+    mv fuzzing/dictionaries/http.dict $SRC/HttpParserFuzzer.dict && \
+    mv fuzzing/dictionaries/xml.dict $SRC/XmlParserFuzzer.dict && \
+    rm -rf fuzzing
+
+RUN git clone --depth 1 https://github.com/dvyukov/go-fuzz-corpus && \
+    zip -j $SRC/HTTP2CServerFuzzer_seed_corpus.zip go-fuzz-corpus/http2/corpus/* && \
+    zip -j $SRC/HttpParserFuzzer_seed_corpus.zip go-fuzz-corpus/httpreq/corpus/* && \
+    zip -j $SRC/XmlParserFuzzer_seed_corpus.zip go-fuzz-corpus/xml/corpus/* && \
+    rm -rf go-fuzz-corpus
 
 COPY project-parent $SRC/project-parent/
 

@@ -3,6 +3,7 @@ language: c++
 primary_contact: "lasse.collin@tukaani.org"
 auto_ccs:
   - "bshas3@gmail.com"
+  - "samjd1024@gmail.com"
 fuzzing_engines:
   - libfuzzer
   - afl
@@ -11,4 +12,4 @@ sanitizers:
   - address
   - memory
   - undefined
-main_repo: 'https://git.tukaani.org/xz.git'
+main_repo: 'https://github.com/tukaani-project/xz.git'

@@ -29,7 +29,7 @@ RUN mkdir -p ~/.m2 && \
 #
 # install maven and gradle
 #
-RUN curl -L https://downloads.apache.org/maven/maven-3/3.8.7/binaries/apache-maven-3.8.7-bin.zip -o maven.zip && \
+RUN curl -L https://archive.apache.org/dist/maven/maven-3/3.8.7/binaries/apache-maven-3.8.7-bin.zip -o maven.zip && \
 	unzip maven.zip -d $SRC/maven-3.8.7 && \
 	rm -rf maven.zip
 
@@ -48,8 +48,9 @@ WORKDIR ${SRC}
 ENV LIBRARY_NAME htmlunit
 RUN git clone https://github.com/HtmlUnit/htmlunit.git ${SRC}/${LIBRARY_NAME}
 
-ADD patch-disable-pgp.diff ${SRC}/
-RUN cd ${SRC}/htmlunit && (for i in ${SRC}/patch-*.diff; do tr -d '\015' < $i | git apply -v; done )
+# pgp now disabled by MVN_FLAGS in build.sh
+# ADD patch-disable-pgp.diff ${SRC}/
+# RUN cd ${SRC}/htmlunit && (for i in ${SRC}/patch-*.diff; do tr -d '\015' < $i | git apply -v; done )
 
 ADD build.sh ${SRC}/
 ADD ${LIBRARY_NAME}-fuzzer ${SRC}/${LIBRARY_NAME}-fuzzer/

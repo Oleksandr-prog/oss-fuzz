@@ -12,6 +12,8 @@ limitations under the License.
 
 #include "hdf5.h"
 
+#include <unistd.h>
+
 extern int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
     // Some old logic with regards to skipping first byte. Leaving it here
@@ -33,7 +35,10 @@ extern int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     fwrite(data, size, 1, fp);
     fclose(fp);
 
-    H5Fopen(filename, H5F_ACC_RDONLY, H5P_DEFAULT);
+    hid_t fuzz_h5_id = H5Fopen(filename, H5F_ACC_RDWR, H5P_DEFAULT);
+    if (fuzz_h5_id != H5I_INVALID_HID) {
+        H5Fclose(fuzz_h5_id);
+    }
 
     return 0;
 }

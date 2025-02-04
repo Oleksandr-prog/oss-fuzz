@@ -15,6 +15,11 @@
 ################################################################################
 
 FROM gcr.io/oss-fuzz-base/base-builder-jvm
+
+ENV JAVA_HOME $JAVA_15_HOME
+ENV JVM_LD_LIBRARY_PATH $JAVA_HOME/lib/server
+ENV PATH $JAVA_HOME/bin:$PATH
+
 RUN apt-get update && apt-get install -y make autoconf automake libtool
 RUN git clone --depth 1 https://github.com/apache/felix-dev.git apache-felix-dev     # or use other version control
 
@@ -26,7 +31,7 @@ RUN git clone --depth 1 https://github.com/dvyukov/go-fuzz-corpus && \
     zip -q $SRC/JSONParserFuzzer_seed_corpus.zip go-fuzz-corpus/json/corpus/* && \
     rm -rf go-fuzz-corpus
 
-RUN curl -L https://downloads.apache.org/maven/maven-3/3.8.7/binaries/apache-maven-3.8.7-bin.zip -o maven.zip && \
+RUN curl -L https://archive.apache.org/dist/maven/maven-3/3.8.7/binaries/apache-maven-3.8.7-bin.zip -o maven.zip && \
     unzip maven.zip -d $SRC/maven && \
     rm -rf maven.zip
 

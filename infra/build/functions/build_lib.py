@@ -22,16 +22,21 @@ import re
 import six.moves.urllib.parse as urlparse
 import sys
 import time
+import tarfile
+import tempfile
+import uuid
 
 from googleapiclient.discovery import build as cloud_build
 import googleapiclient.discovery
 import google.api_core.client_options
 import google.auth
+from google.cloud import storage
 from oauth2client import service_account as service_account_lib
 import requests
 import yaml
 
 BASE_IMAGES_PROJECT = 'oss-fuzz-base'
+IMAGE_PROJECT = 'oss-fuzz'
 
 BUILD_TIMEOUT = 20 * 60 * 60
 
@@ -58,10 +63,9 @@ EngineInfo = collections.namedtuple(
 
 ENGINE_INFO = {
     'libfuzzer':
-        EngineInfo(
-            upload_bucket='clusterfuzz-builds',
-            supported_sanitizers=['address', 'memory', 'undefined', 'none'],
-            supported_architectures=['x86_64', 'i386', 'aarch64']),
+        EngineInfo(upload_bucket='clusterfuzz-builds',
+                   supported_sanitizers=['address', 'memory', 'undefined'],
+                   supported_architectures=['x86_64', 'i386', 'aarch64']),
     'afl':
         EngineInfo(upload_bucket='clusterfuzz-builds-afl',
                    supported_sanitizers=['address'],
@@ -88,12 +92,19 @@ OSS_FUZZ_BUILDPOOL_NAME = os.getenv(
     'GCB_BUILDPOOL_NAME', 'projects/oss-fuzz/locations/us-central1/'
     'workerPools/buildpool')
 
-US_CENTRAL_CLIENT_OPTIONS = google.api_core.client_options.ClientOptions(
-    api_endpoint='https://us-central1-cloudbuild.googleapis.com/')
+OSS_FUZZ_EXPERIMENTS_BUILDPOOL_NAME = os.getenv(
+    'GCB_BUILDPOOL_NAME', 'projects/oss-fuzz/locations/us-central1/'
+    'workerPools/buildpool-experiments')
+
+CLOUD_BUILD_LOCATION = os.getenv('CLOUD_BUILD_LOCATION', 'us-central1')
+REGIONAL_CLIENT_OPTIONS = google.api_core.client_options.ClientOptions(
+    api_endpoint=f'https://{CLOUD_BUILD_LOCATION}-cloudbuild.googleapis.com/')
 
 DOCKER_TOOL_IMAGE = 'gcr.io/cloud-builders/docker'
 
 _ARM64 = 'aarch64'
+
+OSS_FUZZ_ROOT = os.path.abspath(os.path.join(__file__, '..', '..', '..', '..'))
 
 
 def get_targets_list_filename(sanitizer):
@@ -235,7 +246,7 @@ def download_corpora_steps(project_name, test_image_suffix):
       download_corpus_args.append('%s %s' % (corpus_archive_path, url))
 
     steps.append({
-        'name': get_runner_image_name(BASE_IMAGES_PROJECT, test_image_suffix),
+        'name': get_runner_image_name(test_image_suffix),
         'entrypoint': 'download_corpus',
         'args': download_corpus_args,
         'volumes': [{
@@ -264,11 +275,13 @@ def download_coverage_data_steps(project_name, latest, bucket_name, out_dir):
   bucket_url = f'gs://{bucket_name}/{project_name}/textcov_reports/{latest}/*'
   steps.append({
       'name': 'gcr.io/cloud-builders/gsutil',
-      'args': ['-m', 'cp', '-r', bucket_url, coverage_data_path]
+      'args': ['-m', 'cp', '-r', bucket_url, coverage_data_path],
+      'allowFailure': True
   })
   steps.append({
       'name': 'gcr.io/oss-fuzz-base/base-runner',
-      'args': ['bash', '-c', f'ls -lrt {out_dir}/textcov_reports']
+      'args': ['bash', '-c', f'ls -lrt {out_dir}/textcov_reports'],
+      'allowFailure': True
   })
 
   return steps
@@ -315,7 +328,9 @@ def get_pull_test_images_steps(test_image_suffix):
       'gcr.io/oss-fuzz-base/base-builder-jvm',
       'gcr.io/oss-fuzz-base/base-builder-go',
       'gcr.io/oss-fuzz-base/base-builder-python',
+      'gcr.io/oss-fuzz-base/base-builder-ruby',
       'gcr.io/oss-fuzz-base/base-builder-rust',
+      'gcr.io/oss-fuzz-base/base-builder-ruby',
       'gcr.io/oss-fuzz-base/base-runner',
   ]
   steps = []
@@ -370,11 +385,16 @@ def _make_image_name_architecture_specific(image_name, architecture):
   return f'{image_name}-{architecture.lower()}'
 
 
+def get_unique_build_step_image_id():
+  return uuid.uuid4()
+
+
 def get_docker_build_step(image_names,
                           directory,
                           use_buildkit_cache=False,
                           src_root='oss-fuzz',
-                          architecture='x86_64'):
+                          architecture='x86_64',
+                          cache_image=''):
   """Returns the docker build step."""
   assert len(image_names) >= 1
   directory = os.path.join(src_root, directory)
@@ -391,13 +411,17 @@ def get_docker_build_step(image_names,
         _make_image_name_architecture_specific(image_name, architecture)
         for image_name in image_names
     ]
-  for image_name in image_names:
+  if cache_image:
+    args.extend(['--build-arg', f'CACHE_IMAGE={cache_image}'])
+
+  for image_name in sorted(image_names):
     args.extend(['--tag', image_name])
 
   step = {
       'name': DOCKER_TOOL_IMAGE,
       'args': args,
       'dir': directory,
+      'id': f'build-{get_unique_build_step_image_id()}',
   }
   # Handle buildkit args
   # Note that we mutate "args" after making it a value in step.
@@ -423,32 +447,46 @@ def get_project_image_steps(  # pylint: disable=too-many-arguments
     image,
     language,
     config,
-    architectures=None):
+    architectures=None,
+    experiment=False,
+    cache_image=None,
+    srcmap=True):
   """Returns GCB steps to build OSS-Fuzz project image."""
   if architectures is None:
     architectures = []
 
   # TODO(metzman): Pass the URL to clone.
   clone_step = get_git_clone_step(repo_url=config.repo, branch=config.branch)
-  steps = [clone_step]
+  if experiment:
+    # Skip cloning if we're in an experiment. The source is submitted to GCB
+    # via gcloud builds submit.
+    steps = []
+  else:
+    steps = [clone_step]
   if config.test_image_suffix:
     steps.extend(get_pull_test_images_steps(config.test_image_suffix))
-  docker_build_step = get_docker_build_step([image],
-                                            os.path.join('projects', name))
+  src_root = 'oss-fuzz' if not experiment else '.'
+
+  docker_build_step = get_docker_build_step(
+      [image, _get_unsafe_name(name)],
+      os.path.join('projects', name),
+      src_root=src_root,
+      cache_image=cache_image)
   steps.append(docker_build_step)
-  srcmap_step_id = get_srcmap_step_id()
-  steps.extend([{
-      'name': image,
-      'args': [
-          'bash', '-c',
-          'srcmap > /workspace/srcmap.json && cat /workspace/srcmap.json'
-      ],
-      'env': [
-          'OSSFUZZ_REVISION=$REVISION_ID',
-          'FUZZING_LANGUAGE=%s' % language,
-      ],
-      'id': srcmap_step_id
-  }])
+  if srcmap:
+    srcmap_step_id = get_srcmap_step_id()
+    steps.extend([{
+        'name': image,
+        'args': [
+            'bash', '-c',
+            'srcmap > /workspace/srcmap.json && cat /workspace/srcmap.json'
+        ],
+        'env': [
+            'OSSFUZZ_REVISION=$REVISION_ID',
+            f'FUZZING_LANGUAGE={language}',
+        ],
+        'id': srcmap_step_id
+    }])
 
   if has_arm_build(architectures):
     builder_name = 'buildxbuilder'
@@ -466,19 +504,34 @@ def get_project_image_steps(  # pylint: disable=too-many-arguments
             'args': ['buildx', 'use', builder_name]
         },
     ])
-    docker_build_arm_step = get_docker_build_step([image],
-                                                  os.path.join(
-                                                      'projects', name),
-                                                  architecture=_ARM64)
+    docker_build_arm_step = get_docker_build_step(
+        [image, _get_unsafe_name(name)],
+        os.path.join('projects', name),
+        architecture=_ARM64)
     steps.append(docker_build_arm_step)
+
+  if (config.build_type == 'fuzzing' and language in ('c', 'c++')):
+    # Push so that historical bugs are reproducible.
+    push_step = {
+        'name': 'gcr.io/cloud-builders/docker',
+        'args': ['push', _get_unsafe_name(name)],
+        'id': 'push-image',
+        'waitFor': [docker_build_step['id']],
+        'allowFailure': True
+    }
+    steps.append(push_step)
 
   return steps
 
 
-def get_logs_url(build_id, project_id='oss-fuzz-base'):
+def _get_unsafe_name(name):
+  return f'us-central1-docker.pkg.dev/oss-fuzz/unsafe/{name}'
+
+
+def get_logs_url(build_id):
   """Returns url that displays the build logs."""
-  return ('https://console.developers.google.com/logs/viewer?'
-          f'resource=build%2Fbuild_id%2F{build_id}&project={project_id}')
+  return (
+      f'https://oss-fuzz-gcb-logs.storage.googleapis.com/log-{build_id}.txt')
 
 
 def get_gcb_url(build_id, cloud_project='oss-fuzz'):
@@ -488,20 +541,22 @@ def get_gcb_url(build_id, cloud_project='oss-fuzz'):
       f'{build_id}?project={cloud_project}')
 
 
-def get_runner_image_name(base_images_project, test_image_suffix):
-  """Returns the runner image that should be used, based on
-  |base_images_project|. Returns the testing image if |test_image_suffix|."""
-  image = f'gcr.io/{base_images_project}/base-runner'
+def get_runner_image_name(test_image_suffix):
+  """Returns the runner image that should be used. Returns the testing image if
+  |test_image_suffix|."""
+  image = f'gcr.io/{BASE_IMAGES_PROJECT}/base-runner'
   if test_image_suffix:
     image += '-' + test_image_suffix
   return image
 
 
-def get_build_body(steps,
-                   timeout,
-                   body_overrides,
-                   build_tags,
-                   use_build_pool=True):
+def get_build_body(  # pylint: disable=too-many-arguments
+    steps,
+    timeout,
+    body_overrides,
+    build_tags,
+    use_build_pool=True,
+    experiment=False):
   """Helper function to create a build from |steps|."""
   if 'GCB_OPTIONS' in os.environ:
     options = yaml.safe_load(os.environ['GCB_OPTIONS'])
@@ -509,7 +564,11 @@ def get_build_body(steps,
     options = {}
 
   if use_build_pool:
-    options['pool'] = {'name': OSS_FUZZ_BUILDPOOL_NAME}
+    if experiment:
+      options['pool'] = {'name': OSS_FUZZ_EXPERIMENTS_BUILDPOOL_NAME}
+    else:
+      options['pool'] = {'name': OSS_FUZZ_BUILDPOOL_NAME}
+
   build_body = {
       'steps': steps,
       'timeout': str(timeout) + 's',
@@ -525,34 +584,98 @@ def get_build_body(steps,
   return build_body
 
 
-def run_build(  # pylint: disable=too-many-arguments
+def _tgz_local_build(oss_fuzz_project, temp_tgz_path):
+  """Prepare a .tgz containing the files required to build
+  `oss_fuzz_project`."""
+  # Just the projects/<project> dir should be sufficient.
+  project_rel_path = os.path.join('projects', oss_fuzz_project)
+  with tarfile.open(temp_tgz_path, 'w:gz') as tar:
+    tar.add(os.path.join(OSS_FUZZ_ROOT, project_rel_path),
+            arcname=project_rel_path)
+
+
+def run_build(  # pylint: disable=too-many-arguments, too-many-locals
+    oss_fuzz_project,
     steps,
     credentials,
     cloud_project,
     timeout,
     body_overrides=None,
     tags=None,
-    use_build_pool=True):
+    use_build_pool=True,
+    experiment=False):
   """Runs the build."""
 
   build_body = get_build_body(steps,
                               timeout,
                               body_overrides,
                               tags,
-                              use_build_pool=use_build_pool)
+                              use_build_pool=use_build_pool,
+                              experiment=experiment)
+  if experiment:
+    with tempfile.NamedTemporaryFile(suffix='source.tgz') as tgz_file:
+      # Archive the necessary files for the build.
+      _tgz_local_build(oss_fuzz_project, tgz_file.name)
+      gcs_client = storage.Client()
+      # This is the automatically created Cloud Build bucket for Cloud Build.
+      bucket_name = gcs_client.project + '_cloudbuild'
+      bucket = gcs_client.bucket(bucket_name)
+      blob_name = f'source/{str(uuid.uuid4())}.tgz'
+      blob = bucket.blob(blob_name)
+      logging.info(f'Uploading project to {bucket_name}/{blob_name}')
+      blob.upload_from_filename(tgz_file.name)
+
+      build_body['source'] = {
+          'storageSource': {
+              'bucket': bucket_name,
+              'object': blob_name,
+          }
+      }
 
   cloudbuild = cloud_build('cloudbuild',
                            'v1',
                            credentials=credentials,
                            cache_discovery=False,
-                           client_options=US_CENTRAL_CLIENT_OPTIONS)
+                           client_options=REGIONAL_CLIENT_OPTIONS)
 
   build_info = cloudbuild.projects().builds().create(projectId=cloud_project,
                                                      body=build_body).execute()
 
   build_id = build_info['metadata']['build']['id']
 
-  logging.info('Build ID: %s', build_id)
-  logging.info('Logs: %s', get_logs_url(build_id, cloud_project))
-  logging.info('Cloud build page: %s', get_gcb_url(build_id, cloud_project))
+  logging.info(f'{oss_fuzz_project}. logs: {get_logs_url(build_id)}. '
+               f'GCB page: {get_gcb_url(build_id, cloud_project)}')
   return build_id
+
+
+def wait_for_build(build_id, credentials, cloud_project):
+  """Wait for a GCB build."""
+  cloudbuild = cloud_build('cloudbuild',
+                           'v1',
+                           credentials=credentials,
+                           cache_discovery=False,
+                           client_options=REGIONAL_CLIENT_OPTIONS)
+
+  while True:
+    try:
+      status = cloudbuild.projects().builds().get(projectId=cloud_project,
+                                                  id=build_id).execute()
+      if status.get('status') in ('SUCCESS', 'FAILURE', 'TIMEOUT',
+                                  'INTERNAL_ERROR', 'EXPIRED', 'CANCELLED'):
+        # Build done.
+        return
+    except (googleapiclient.errors.HttpError, BrokenPipeError):
+      pass
+
+    time.sleep(15)  # Avoid rate limiting.
+
+
+def cancel_build(build_id, credentials, cloud_project):
+  """Cancel a GCB build"""
+  cloudbuild = cloud_build('cloudbuild',
+                           'v1',
+                           credentials=credentials,
+                           cache_discovery=False,
+                           client_options=REGIONAL_CLIENT_OPTIONS)
+  cloudbuild.projects().builds().cancel(projectId=cloud_project,
+                                        id=build_id).execute()

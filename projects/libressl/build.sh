@@ -18,8 +18,8 @@
 
 # Install Boost headers
 cd $SRC/
-tar jxf boost_1_74_0.tar.bz2
-cd boost_1_74_0/
+tar jxf boost_1_84_0.tar.bz2
+cd boost_1_84_0/
 CFLAGS="" CXXFLAGS="" ./bootstrap.sh
 CFLAGS="" CXXFLAGS="" ./b2 headers
 cp -R boost/ /usr/include/
@@ -80,9 +80,9 @@ fi
 cd $SRC/botan
 if [[ $CFLAGS != *-m32* ]]
 then
-    ./configure.py --cc-bin=$CXX --cc-abi-flags="$CXXFLAGS" --disable-shared --disable-modules=locking_allocator,x509,tls --build-targets=static --without-documentation
+    ./configure.py --cc-bin=$CXX --cc-abi-flags="$CXXFLAGS" --disable-shared --disable-modules=locking_allocator,x509 --build-targets=static --without-documentation
 else
-    ./configure.py --cpu=x86_32 --cc-bin=$CXX --cc-abi-flags="$CXXFLAGS" --disable-shared --disable-modules=locking_allocator,x509,tls --build-targets=static --without-documentation
+    ./configure.py --cpu=x86_32 --cc-bin=$CXX --cc-abi-flags="$CXXFLAGS" --disable-shared --disable-modules=locking_allocator,x509 --build-targets=static --without-documentation
 fi
 make -j$(nproc)
 
@@ -130,5 +130,3 @@ LIBFUZZER_LINK="$LIB_FUZZING_ENGINE" CXXFLAGS="$CXXFLAGS -DCRYPTOFUZZ_LIBRESSL -
 cp $SRC/cryptofuzz/cryptofuzz $OUT/cryptofuzz
 # Copy dictionary
 cp $SRC/cryptofuzz/cryptofuzz-dict.txt $OUT/cryptofuzz.dict
-# Copy seed corpus
-cp $SRC/cryptofuzz-corpora/libressl_latest.zip $OUT/cryptofuzz_seed_corpus.zip

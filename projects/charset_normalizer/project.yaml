@@ -6,9 +6,6 @@ main_repo: https://github.com/Ousret/charset_normalizer
 primary_contact: ahmed.tahri@cloudnursery.dev
 sanitizers:
 - address
-- undefined
 vendor_ccs:
 - david@adalogics.com
 - adam@adalogics.com
-- riccardo.schirone@trailofbits.com
-- facundo.tuesca@trailofbits.com

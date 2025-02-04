@@ -16,6 +16,7 @@
 
 FROM gcr.io/oss-fuzz-base/base-builder-go
 RUN git clone --depth 1 https://github.com/dapr/dapr
+RUN git clone --depth 1 https://github.com/dapr/kit
 RUN git clone --depth 1 https://github.com/cncf/cncf-fuzzing
 WORKDIR $SRC/dapr
 COPY build.sh $SRC/

@@ -16,7 +16,7 @@
 
 FROM gcr.io/oss-fuzz-base/base-builder-jvm
 
-RUN curl -L https://downloads.apache.org/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip -o maven.zip && \
+RUN curl -L https://archive.apache.org/dist/maven/maven-3/3.6.3/binaries/apache-maven-3.6.3-bin.zip -o maven.zip && \
     unzip maven.zip -d $SRC/maven && \
     rm -rf maven.zip
 
@@ -30,5 +30,5 @@ RUN git clone --depth 1 https://github.com/google/fuzzing && \
 RUN git clone --depth 1 https://github.com/FasterXML/jackson-dataformats-text.git
 
 COPY build.sh $SRC/
-COPY CSVFuzzer.java PropertiesFuzzer.java TOMLFuzzer.java YAMLFuzzer.java $SRC/
+COPY *Fuzzer.java  $SRC/
 WORKDIR $SRC/jackson-dataformats-text

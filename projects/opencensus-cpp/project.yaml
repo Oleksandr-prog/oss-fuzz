@@ -8,8 +8,6 @@ sanitizers:
 - address
 - memory
 main_repo: 'https://github.com/census-instrumentation/opencensus-cpp'
-fuzzing_engines:
- - afl
- - honggfuzz
- - libfuzzer
- - centipede
+
+# opencensus is being archived cf https://opentelemetry.io/blog/2023/sunsetting-opencensus/
+disabled: true

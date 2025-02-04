@@ -28,19 +28,17 @@ RUN apt-get -y update && \
       cmake \
       g++ \
       git \
-      ladspa-sdk \
       libasound-dev \
       libdbus-1-dev \
       libgtest-dev \
       libncurses5-dev \
       libsbc-dev \
-      libsndfile-dev \
       libspeexdsp-dev \
       libsystemd-dev \
+      libclang1 \
       libtool \
       libudev-dev \
       wget \
-      vim \
       zip
 RUN apt-get clean
 
@@ -62,7 +60,6 @@ RUN mkdir -p /tmp/alsa-build && cd /tmp/alsa-build && \
       make clean && \
       make -j$(nproc) all && \
       make install
-
 
 RUN cd $SRC && git clone https://chromium.googlesource.com/chromiumos/third_party/adhd
 WORKDIR adhd

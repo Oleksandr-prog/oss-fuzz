@@ -16,6 +16,7 @@
 
 FROM gcr.io/oss-fuzz-base/base-builder-go
 RUN git clone --depth 1 https://github.com/sigstore/rekor
-
+RUN git clone --depth=1 https://github.com/AdamKorcz/instrumentation
+RUN git clone --depth=1 https://github.com/sassoftware/relic
 COPY build.sh $SRC
 WORKDIR $SRC/rekor/pkg

@@ -3,6 +3,7 @@ language: c++
 primary_contact: "huili2@cisco.com"
 auto_ccs:
   - "guangwwa@cisco.com"
+  - "openh264-review@cisco.com"
   - "sijchen@cisco.com"
   - "yanqian@cisco.com"
   - "xiaotianshimail@gmail.com"
@@ -18,3 +19,8 @@ architectures:
  - i386
  - x86_64
 main_repo: 'https://github.com/cisco/openh264.git'
+
+fuzzing_engines:
+  - afl
+  - honggfuzz
+  - libfuzzer
